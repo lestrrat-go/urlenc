@@ -10,7 +10,7 @@ package urlenc_test
 import (
   "log"
 
-  "github.com/lestrrat/go-urlenc
+  "github.com/lestrrat/go-urlenc"
 )
 
 type Foo struct {
