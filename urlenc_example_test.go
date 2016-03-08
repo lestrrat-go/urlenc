@@ -6,7 +6,7 @@ import (
 	"github.com/lestrrat/go-urlenc"
 )
 
-type Foo struct {
+type ExampleStruct struct {
 	Bar   string    `urlenc:"bar"`
 	Baz   int       `urlenc:"baz"`
 	Qux   []string  `urlenc:"qux"`
@@ -16,7 +16,7 @@ type Foo struct {
 func Example() {
 	const src = `bar=one&baz=2&qux=three&qux=4&corge=1.41421356237&corge=2.2360679775`
 
-	var foo Foo
+	var foo ExampleStruct
 	if err := urlenc.Unmarshal([]byte(src), &foo); err != nil {
 		return
 	}
