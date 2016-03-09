@@ -64,3 +64,17 @@ func TestMarshal(t *testing.T) {
 		return
 	}
 }
+
+type ZeroInt struct {
+	Limit int `urlenc:"limit,omitempty"`
+}
+func TestMarshalZeroInt(t *testing.T) {
+	buf, err := urlenc.Marshal(ZeroInt{})
+	if !assert.NoError(t, err, "Marshal should succeed") {
+		return
+	}
+
+	if !assert.Equal(t, string(buf), "", "zero values don't get marshaled") {
+		return
+	}
+}

@@ -251,6 +251,11 @@ func Marshal(v interface{}) ([]byte, error) {
 		fv := rv.Field(f.Index)
 		switch f.Type {
 		case stringType, numberType:
+			// If this is a zero value, we skip
+			if reflect.Zero(fv.Type()).Interface() == fv.Interface() {
+				continue
+			}
+
 			s, err := convertToString(fv)
 			if err != nil {
 				return nil, err
