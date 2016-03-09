@@ -158,6 +158,10 @@ func convertFromString(k reflect.Kind, v string) (reflect.Value, error) {
 }
 
 func (tkm type2fields) getFields(t reflect.Type) ([]field, error) {
+	if t.Kind() != reflect.Struct {
+		return nil, errors.New("target is not a struct")
+	}
+
 	tkm.lock.RLock()
 
 	km, ok := tkm.types[t]
