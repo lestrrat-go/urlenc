@@ -2,6 +2,10 @@
 
 Marshal/Unmarshal interface for structs that can encode/decode themselves to URL query strings
 
+[![Build Status](https://travis-ci.org/lestrrat/go-urlenc.svg?branch=master)](https://travis-ci.org/lestrrat/go-urlenc)
+
+[![GoDoc](https://godoc.org/github.com/lestrrat/go-urlenc?status.svg)](https://godoc.org/github.com/lestrrat/go-urlenc)
+
 # Synopsis
 
 ```go
