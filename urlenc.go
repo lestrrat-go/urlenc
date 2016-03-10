@@ -157,9 +157,9 @@ func convertFromString(k reflect.Kind, v string) (reflect.Value, error) {
 	}
 }
 
-func (tkm type2fields) getFields(t reflect.Type) ([]field, error) {
+func (tkm type2fields) getStructFields(t reflect.Type) ([]field, error) {
 	if t.Kind() != reflect.Struct {
-		return nil, errors.New("target is not a struct")
+		return nil, errors.New("target is not a struct (Kind: " + t.Kind().String() + ")")
 	}
 
 	tkm.lock.RLock()
@@ -184,7 +184,7 @@ func (tkm type2fields) getFields(t reflect.Type) ([]field, error) {
 		// strings, numbers, and slices of those two are allowed
 		typ, ok := isSupportedType(f.Type, true)
 		if !ok {
-			return nil, errors.New("unsupported type on field " + f.Name)
+			return nil, errors.New("urlenc: unsupported type on struct field " + f.Name)
 		}
 
 		// urlenc:"foo,omitempty"
@@ -244,8 +244,73 @@ func Marshal(v interface{}) ([]byte, error) {
 		rv = rv.Elem()
 	}
 
-	// Grab the mapping from struct tags
-	fields, err := t2f.getFields(rv.Type())
+	switch rv.Kind() {
+	case reflect.Map:
+		if kk := rv.Type().Key().Kind(); kk != reflect.String {
+			return nil, errors.New("urlenc.Marshal: map key must be string type (Kind: " + kk.String() + ")")
+		}
+		return marshalMap(rv)
+	case reflect.Struct:
+		return marshalStruct(rv)
+	default:
+		return nil, errors.New("urlenc.Marshal: unsupported type (Kind: " + rv.Kind().String() + ")")
+	}
+}
+
+func addValue(uv *url.Values, name string, fv reflect.Value, typ int) error {
+	switch typ {
+	case stringType, numberType:
+		// If this is a zero value, we skip
+		if reflect.Zero(fv.Type()).Interface() == fv.Interface() {
+			return nil
+		}
+
+		s, err := convertToString(fv)
+		if err != nil {
+			return err
+		}
+		uv.Add(name, s)
+	case stringSliceType, numberSliceType:
+		for i := 0; i < fv.Len(); i++ {
+			ev := fv.Index(i)
+			s, err := convertToString(ev)
+			if err != nil {
+				return err
+			}
+			uv.Add(name, s)
+		}
+	}
+	return nil
+}
+
+func marshalMap(rv reflect.Value) ([]byte, error) {
+	if rv.Kind() != reflect.Map {
+		return nil, errors.New("target is not a map (Kind: " + rv.Kind().String() + ")")
+	}
+
+	uv := url.Values{}
+	for _, key := range rv.MapKeys() {
+		fv := rv.MapIndex(key)
+		switch fv.Kind() {
+		case reflect.Ptr, reflect.Interface:
+			fv = fv.Elem()
+		}
+
+		typ, ok := isSupportedType(fv.Type(), true)
+		if !ok {
+			return nil, errors.New("urlenc: unsupported type on map element " + key.String())
+		}
+
+		if err := addValue(&uv, key.String(), fv, typ); err != nil {
+			return nil, err
+		}
+	}
+	return []byte(uv.Encode()), nil
+}
+
+
+func marshalStruct(rv reflect.Value) ([]byte, error) {
+	fields, err := t2f.getStructFields(rv.Type())
 	if err != nil {
 		return nil, err
 	}
@@ -253,27 +318,8 @@ func Marshal(v interface{}) ([]byte, error) {
 	uv := url.Values{}
 	for _, f := range fields {
 		fv := rv.Field(f.Index)
-		switch f.Type {
-		case stringType, numberType:
-			// If this is a zero value, we skip
-			if reflect.Zero(fv.Type()).Interface() == fv.Interface() {
-				continue
-			}
-
-			s, err := convertToString(fv)
-			if err != nil {
-				return nil, err
-			}
-			uv.Add(f.Name, s)
-		case stringSliceType, numberSliceType:
-			for i := 0; i < fv.Len(); i++ {
-				ev := fv.Index(i)
-				s, err := convertToString(ev)
-				if err != nil {
-					return nil, err
-				}
-				uv.Add(f.Name, s)
-			}
+		if err := addValue(&uv, f.Name, fv, f.Type); err != nil {
+			return nil, err
 		}
 	}
 	return []byte(uv.Encode()), nil
@@ -293,14 +339,45 @@ func Unmarshal(data []byte, v interface{}) error {
 
 	// This better be a pointer
 	if rv.Kind() != reflect.Ptr {
-		return errors.New("pointer to a struct required")
+		return errors.New("pointer value required")
 	}
 
 	// Get the value beyond the pointer
 	rv = rv.Elem()
 
+	switch rv.Kind() {
+	case reflect.Map:
+		if kk := rv.Type().Key().Kind(); kk != reflect.String {
+			return errors.New("urlenc.Unmarshal: map key must be string type (Kind: " + kk.String() + ")")
+		}
+		return unmarshalMap(data, rv)
+	case reflect.Struct:
+		return unmarshalStruct(data, rv)
+	default:
+		return errors.New("urlenc.Unmarshal: unsupported type (Kind: " + rv.Kind().String() + ")")
+	}
+}
+
+func unmarshalMap(data []byte, rv reflect.Value) error {
+	q, err := url.ParseQuery(string(data))
+	if err != nil {
+		return err
+	}
+
+	for k, v := range q {
+		if len(v) == 1 {
+			rv.SetMapIndex(reflect.ValueOf(k), reflect.ValueOf(v[0]))
+		} else {
+			rv.SetMapIndex(reflect.ValueOf(k), reflect.ValueOf(v))
+		}
+	}
+
+	return nil
+}
+
+func unmarshalStruct(data []byte, rv reflect.Value) error {
 	// Grab the mapping from struct tags
-	fields, err := t2f.getFields(rv.Type())
+	fields, err := t2f.getStructFields(rv.Type())
 	if err != nil {
 		return err
 	}
