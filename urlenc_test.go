@@ -1,22 +1,44 @@
 package urlenc_test
 
 import (
+	"errors"
 	"net/url"
+	"reflect"
 	"testing"
 
 	"github.com/lestrrat/go-urlenc"
 	"github.com/stretchr/testify/assert"
 )
 
+type MaybeString struct {
+	Valid  bool
+	String string
+}
+
+func (m MaybeString) Value() interface{} {
+	return m.String
+}
+
+func (m *MaybeString) Set(v interface{}) error {
+	switch v.(type) {
+	case string:
+		m.String = v.(string)
+	default:
+		return errors.New("expected string (got: " + reflect.TypeOf(v).String() + ")")
+	}
+	return nil
+}
+
 type Foo struct {
-	Bar   string    `urlenc:"bar"`
-	Baz   int       `urlenc:"baz"`
-	Qux   []string  `urlenc:"qux"`
-	Corge []float64 `urlenc:"corge"`
+	Bar     string      `urlenc:"bar"`
+	Baz     int         `urlenc:"baz"`
+	Qux     []string    `urlenc:"qux"`
+	Corge   []float64   `urlenc:"corge"`
+	Special MaybeString `urlenc:"special,omitempty,string"`
 }
 
 func TestUnmarshal(t *testing.T) {
-	const src = `bar=one&baz=2&qux=three&qux=4&corge=1.41421356237&corge=2.2360679775`
+	const src = `bar=one&baz=2&qux=three&qux=4&corge=1.41421356237&corge=2.2360679775&special=special`
 
 	var foo Foo
 	if !assert.NoError(t, urlenc.Unmarshal([]byte(src), &foo), "Unmarshal should succeed") {
@@ -33,6 +55,9 @@ func TestUnmarshal(t *testing.T) {
 		return
 	}
 	if !assert.Equal(t, foo.Corge, []float64{1.41421356237, 2.2360679775}, "Corge is '1.41421356237, 2.2360679775'") {
+		return
+	}
+	if !assert.Equal(t, foo.Special.String, "special", "Spcial is 'special'") {
 		return
 	}
 }

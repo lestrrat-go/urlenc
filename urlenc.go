@@ -69,7 +69,33 @@ func isSupportedType(rt reflect.Type, recurse bool) bool {
 	}
 }
 
+type Valuer interface {
+	Value() interface{}
+}
+
+var valuerif = reflect.TypeOf((*Valuer)(nil)).Elem()
+
+func getValuerMethod(fv reflect.Value) reflect.Value {
+	const methodName = "Value"
+	var mv reflect.Value
+	if fv.Type().Implements(valuerif) {
+		mv = fv.MethodByName(methodName)
+	} else if fv.CanAddr() && fv.Addr().Type().Implements(valuerif) {
+		mv = fv.Addr().MethodByName(methodName)
+	}
+	return mv
+}
+
 func convertToString(rv reflect.Value) (string, error) {
+	if mv := getValuerMethod(rv); mv != zeroval {
+		out := mv.Call(nil)
+		rv = out[0]
+		switch rv.Kind() {
+		case reflect.Ptr, reflect.Interface:
+			rv = rv.Elem()
+		}
+	}
+
 	switch rv.Kind() {
 	case reflect.String:
 		return rv.String(), nil
@@ -81,7 +107,7 @@ func convertToString(rv reflect.Value) (string, error) {
 		return strconv.FormatFloat(rv.Float(), 'f', -1, 64), nil
 	}
 
-	return "", errors.New("unsupported type")
+	return "", errors.New("urlenc: unsupported type to convert: " + rv.Type().String())
 }
 
 func convertFromString(k reflect.Kind, v string) (reflect.Value, error) {
@@ -165,6 +191,38 @@ func convertFromString(k reflect.Kind, v string) (reflect.Value, error) {
 	}
 }
 
+var _nameToType map[string]reflect.Type
+
+func init() {
+	_nameToType = make(map[string]reflect.Type)
+	_nameToType["string"] = reflect.TypeOf("")
+	_nameToType["int"] = reflect.TypeOf(int(0))
+	_nameToType["int8"] = reflect.TypeOf(int8(0))
+	_nameToType["int16"] = reflect.TypeOf(int16(0))
+	_nameToType["int32"] = reflect.TypeOf(int32(0))
+	_nameToType["int64"] = reflect.TypeOf(int64(0))
+	_nameToType["uint"] = reflect.TypeOf(uint(0))
+	_nameToType["uint8"] = reflect.TypeOf(uint8(0))
+	_nameToType["uint16"] = reflect.TypeOf(uint16(0))
+	_nameToType["uint32"] = reflect.TypeOf(uint32(0))
+	_nameToType["uint64"] = reflect.TypeOf(uint64(0))
+	_nameToType["float32"] = reflect.TypeOf(float32(0))
+	_nameToType["float64"] = reflect.TypeOf(float64(0))
+}
+func nameToType(s string, recurse bool) reflect.Type {
+	if strings.HasPrefix(s, "[]") {
+		t := nameToType(s[2:], false)
+		if t == nil {
+			return nil
+		}
+		return reflect.SliceOf(t)
+	}
+	if t, ok := _nameToType[s]; ok {
+		return t
+	}
+	return nil
+}
+
 func (tkm type2fields) getStructFields(t reflect.Type) ([]structfield, error) {
 	if t.Kind() != reflect.Struct {
 		return nil, errors.New("target is not a struct (Kind: " + t.Kind().String() + ")")
@@ -185,6 +243,7 @@ func (tkm type2fields) getStructFields(t reflect.Type) ([]structfield, error) {
 
 		var keyname string
 		var omitempty bool
+		fieldtype := f.Type
 		if f.Tag == "" {
 			// no tag at all. Use the name of the field as-is
 			keyname = f.Name
@@ -195,24 +254,35 @@ func (tkm type2fields) getStructFields(t reflect.Type) ([]structfield, error) {
 				keyname = f.Name
 			}
 
-			// strings, numbers, and slices of those two are allowed
-			if ok := isSupportedType(f.Type, true); !ok {
-				return nil, errors.New("urlenc: unsupported type on struct field " + f.Name)
+			// urlenc:"foo,omitempty,<type>"
+			parts := strings.SplitN(st, ",", 3)
+			if len(parts) > 2 {
+				var err error
+				name := strings.TrimSpace(parts[2])
+				fieldtype = nameToType(name, false)
+				if err != nil {
+					return nil, errors.New("urlenc: unsupported type from struct tag: '" + name + "'")
+				}
 			}
 
-			// urlenc:"foo,omitempty"
-			parts := strings.SplitN(st, ",", 2)
-			keyname = strings.TrimSpace(parts[0])
-			if len(parts) > 1 && strings.TrimSpace(parts[1]) == "omitempty" {
-				omitempty = true
+			if len(parts) > 1 {
+				if strings.TrimSpace(parts[1]) == "omitempty" {
+					omitempty = true
+				}
 			}
+			keyname = strings.TrimSpace(parts[0])
+		}
+
+		// strings, numbers, and slices of those two are allowed
+		if ok := isSupportedType(fieldtype, true); !ok {
+			return nil, errors.New("urlenc: unsupported type on struct field " + f.Name + ": " + f.Type.String())
 		}
 
 		sf := structfield{
 			FieldName: f.Name,
 			KeyName:   keyname,
 			OmitEmpty: omitempty,
-			Type:      f.Type,
+			Type:      fieldtype,
 		}
 		km = append(km, sf)
 	}
@@ -225,18 +295,18 @@ func (tkm type2fields) getStructFields(t reflect.Type) ([]structfield, error) {
 	return km, nil
 }
 
-type Marshaller interface {
+type Marshaler interface {
 	MarshalURL() ([]byte, error)
 }
 
-type Unmarshaller interface {
+type Unmarshaler interface {
 	UnmarshalURL([]byte) error
 }
 
 // Marshal encodes the given value into a query string. Only structs and maps
 // with string keys and several types of types as values are supported.
 func Marshal(v interface{}) ([]byte, error) {
-	if u, ok := v.(Marshaller); ok {
+	if u, ok := v.(Marshaler); ok {
 		return u.MarshalURL()
 	}
 
@@ -330,11 +400,15 @@ func marshalStruct(rv reflect.Value) ([]byte, error) {
 				if fv.IsNil() {
 					continue
 				}
+			case reflect.Struct:
+				if fv.Interface() == reflect.Zero(ft).Interface() {
+					continue
+				}
 			default:
 				switch {
 				case fv == zeroval:
 					continue
-				case fv.CanInterface() && fv.Interface() == reflect.Zero(f.Type).Interface():
+				case fv.CanInterface() && fv.Interface() == reflect.Zero(ft).Interface():
 					continue
 				}
 			}
@@ -350,7 +424,7 @@ func marshalStruct(rv reflect.Value) ([]byte, error) {
 var zeroval = reflect.Value{}
 
 func Unmarshal(data []byte, v interface{}) error {
-	if u, ok := v.(Unmarshaller); ok {
+	if u, ok := v.(Unmarshaler); ok {
 		return u.UnmarshalURL(data)
 	}
 
@@ -397,6 +471,23 @@ func unmarshalMap(data []byte, rv reflect.Value) error {
 	return nil
 }
 
+type Setter interface {
+	Set(interface{}) error
+}
+
+var setterif = reflect.TypeOf((*Setter)(nil)).Elem()
+
+func getSetterMethod(fv reflect.Value) reflect.Value {
+	const methodName = "Set"
+	var mv reflect.Value
+	if fv.Type().Implements(setterif) {
+		mv = fv.MethodByName(methodName)
+	} else if fv.CanAddr() && fv.Addr().Type().Implements(setterif) {
+		mv = fv.Addr().MethodByName(methodName)
+	}
+	return mv
+}
+
 func unmarshalStruct(data []byte, rv reflect.Value) error {
 	// Grab the mapping from struct tags
 	fields, err := t2f.getStructFields(rv.Type())
@@ -413,7 +504,13 @@ func unmarshalStruct(data []byte, rv reflect.Value) error {
 		if len(values) <= 0 {
 			continue
 		}
+
 		fv := rv.FieldByName(f.FieldName)
+		switch fv.Kind() {
+		case reflect.Ptr, reflect.Interface:
+			fv = fv.Elem()
+		}
+
 		switch rk := f.Type.Kind(); rk {
 		case reflect.Slice, reflect.Array:
 			et := f.Type.Elem() // slice/array element type
@@ -429,14 +526,30 @@ func unmarshalStruct(data []byte, rv reflect.Value) error {
 			}
 			fv.Set(av)
 		default:
+			// This is checking for the REGISTERED type, not the actual type of the field
 			if !isStringOrNumeric(rk) {
 				return errors.New("urlenc.Unmarshal: unsupported type for field " + f.FieldName + " (Kind: " + rk.String() + ")")
 			}
+
+			// Now convert the value
 			cv, err := convertFromString(f.Type.Kind(), values[0])
 			if err != nil {
 				return err
 			}
-			fv.Set(cv)
+
+			// See if our value can Set()
+			mv := getSetterMethod(fv)
+			if mv == zeroval {
+				// No set. Try doing it the orthodox way
+				fv.Set(cv)
+			} else {
+				out := mv.Call([]reflect.Value{cv})
+				if !out[0].IsNil() {
+					return out[0].Interface().(error)
+				}
+				continue
+			}
+
 		}
 	}
 	return nil
