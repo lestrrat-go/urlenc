@@ -19,46 +19,54 @@ const (
 	numberSliceType
 )
 
-type field struct {
-	ArrayElementKind reflect.Kind
-	ArrayElementType reflect.Type
-	Index            int
-	Kind             reflect.Kind
-	OmitEmpty        bool
-	Name             string
-	Type             int
+type structfield struct {
+	// FieldName is the name of the field, so we can use FieldByName to
+	// index into the struct. This is better (albeit less efficient) than
+	// using numeric indices, because then we can work directly with
+	// embedded structs
+	FieldName string
+	// KeyName is the name that is used in the resulting query for this field
+	KeyName string
+	// If true, the field is not included in the query if its value is
+	// equal to the zero value of the field type
+	OmitEmpty bool
+	// Type is the type of this struct field
+	Type reflect.Type
 }
 
 var t2f = type2fields{
-	types: make(map[reflect.Type][]field),
+	types: make(map[reflect.Type][]structfield),
 }
 
 type type2fields struct {
 	lock  sync.RWMutex
-	types map[reflect.Type][]field
+	types map[reflect.Type][]structfield
 }
 
-func isSupportedType(rt reflect.Type, recurse bool) (int, bool) {
-	switch rt.Kind() {
+func isStringOrNumeric(rk reflect.Kind) bool {
+	switch rk {
 	case reflect.String:
-		return stringType, true
+		return true
 	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64, reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Float32, reflect.Float64:
-		return numberType, true
-	case reflect.Slice:
-		if recurse {
-			et, ok := isSupportedType(rt.Elem(), false)
-			if !ok {
-				return 0, false
-			}
-			switch et {
-			case stringType:
-				return stringSliceType, true
-			case numberType:
-				return numberSliceType, true
-			}
-		}
+		return true
 	}
-	return 0, false
+	return false
+}
+
+func isSupportedType(rt reflect.Type, recurse bool) bool {
+	switch rk := rt.Kind(); rk {
+	case reflect.Slice, reflect.Array:
+		if !recurse {
+			return false
+		}
+		ok := isSupportedType(rt.Elem(), false)
+		if !ok {
+			return false
+		}
+		return true
+	default:
+		return isStringOrNumeric(rk)
+	}
 }
 
 func convertToString(rv reflect.Value) (string, error) {
@@ -157,7 +165,7 @@ func convertFromString(k reflect.Kind, v string) (reflect.Value, error) {
 	}
 }
 
-func (tkm type2fields) getStructFields(t reflect.Type) ([]field, error) {
+func (tkm type2fields) getStructFields(t reflect.Type) ([]structfield, error) {
 	if t.Kind() != reflect.Struct {
 		return nil, errors.New("target is not a struct (Kind: " + t.Kind().String() + ")")
 	}
@@ -170,45 +178,43 @@ func (tkm type2fields) getStructFields(t reflect.Type) ([]field, error) {
 		return km, nil
 	}
 
-	km = make([]field, 0, t.NumField())
+	// the fields did not exist in the registry. create and register
+	km = make([]structfield, 0, t.NumField())
 	for i := 0; i < t.NumField(); i++ {
 		f := t.Field(i)
-		if f.Tag == "" {
-			continue
-		}
-		st := f.Tag.Get("urlenc")
-		if st == "" {
-			continue
-		}
 
-		// strings, numbers, and slices of those two are allowed
-		typ, ok := isSupportedType(f.Type, true)
-		if !ok {
-			return nil, errors.New("urlenc: unsupported type on struct field " + f.Name)
-		}
-
-		// urlenc:"foo,omitempty"
-		parts := strings.SplitN(st, ",", 2)
-		key := strings.TrimSpace(parts[0])
+		var keyname string
 		var omitempty bool
-		if len(parts) > 1 && strings.TrimSpace(parts[1]) == "omitempty" {
-			omitempty = true
+		if f.Tag == "" {
+			// no tag at all. Use the name of the field as-is
+			keyname = f.Name
+		} else {
+			st := f.Tag.Get("urlenc")
+			if st == "" {
+				// tag exists, but is empty. Use the name of the field as-is
+				keyname = f.Name
+			}
+
+			// strings, numbers, and slices of those two are allowed
+			if ok := isSupportedType(f.Type, true); !ok {
+				return nil, errors.New("urlenc: unsupported type on struct field " + f.Name)
+			}
+
+			// urlenc:"foo,omitempty"
+			parts := strings.SplitN(st, ",", 2)
+			keyname = strings.TrimSpace(parts[0])
+			if len(parts) > 1 && strings.TrimSpace(parts[1]) == "omitempty" {
+				omitempty = true
+			}
 		}
 
-		kf := field{
-			Index:     i,
-			Kind:      f.Type.Kind(),
-			Name:      key,
+		sf := structfield{
+			FieldName: f.Name,
+			KeyName:   keyname,
 			OmitEmpty: omitempty,
-			Type:      typ,
+			Type:      f.Type,
 		}
-		switch typ {
-		case stringSliceType, numberSliceType:
-			kf.ArrayElementType = f.Type.Elem()
-			kf.ArrayElementKind = f.Type.Elem().Kind()
-		}
-
-		km = append(km, kf)
+		km = append(km, sf)
 	}
 
 	tkm.lock.RUnlock()
@@ -227,6 +233,8 @@ type Unmarshaller interface {
 	UnmarshalURL([]byte) error
 }
 
+// Marshal encodes the given value into a query string. Only structs and maps
+// with string keys and several types of types as values are supported.
 func Marshal(v interface{}) ([]byte, error) {
 	if u, ok := v.(Marshaller); ok {
 		return u.MarshalURL()
@@ -257,20 +265,14 @@ func Marshal(v interface{}) ([]byte, error) {
 	}
 }
 
-func addValue(uv *url.Values, name string, fv reflect.Value, typ int) error {
-	switch typ {
-	case stringType, numberType:
-		// If this is a zero value, we skip
-		if reflect.Zero(fv.Type()).Interface() == fv.Interface() {
-			return nil
-		}
-
+func addValue(uv *url.Values, name string, fv reflect.Value, ft reflect.Type) error {
+	if isStringOrNumeric(ft.Kind()) {
 		s, err := convertToString(fv)
 		if err != nil {
 			return err
 		}
 		uv.Add(name, s)
-	case stringSliceType, numberSliceType:
+	} else {
 		for i := 0; i < fv.Len(); i++ {
 			ev := fv.Index(i)
 			s, err := convertToString(ev)
@@ -296,18 +298,16 @@ func marshalMap(rv reflect.Value) ([]byte, error) {
 			fv = fv.Elem()
 		}
 
-		typ, ok := isSupportedType(fv.Type(), true)
-		if !ok {
+		if ok := isSupportedType(fv.Type(), true); !ok {
 			return nil, errors.New("urlenc: unsupported type on map element " + key.String())
 		}
 
-		if err := addValue(&uv, key.String(), fv, typ); err != nil {
+		if err := addValue(&uv, key.String(), fv, fv.Type()); err != nil {
 			return nil, err
 		}
 	}
 	return []byte(uv.Encode()), nil
 }
-
 
 func marshalStruct(rv reflect.Value) ([]byte, error) {
 	fields, err := t2f.getStructFields(rv.Type())
@@ -317,8 +317,30 @@ func marshalStruct(rv reflect.Value) ([]byte, error) {
 
 	uv := url.Values{}
 	for _, f := range fields {
-		fv := rv.Field(f.Index)
-		if err := addValue(&uv, f.Name, fv, f.Type); err != nil {
+		fv := rv.FieldByName(f.FieldName)
+
+		// Check for empty values
+		if f.OmitEmpty {
+			if !fv.IsValid() {
+				continue
+			}
+
+			switch ft := fv.Type(); ft.Kind() {
+			case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Ptr, reflect.Slice:
+				if fv.IsNil() {
+					continue
+				}
+			default:
+				switch {
+				case fv == zeroval:
+					continue
+				case fv.CanInterface() && fv.Interface() == reflect.Zero(f.Type).Interface():
+					continue
+				}
+			}
+		}
+
+		if err := addValue(&uv, f.KeyName, fv, f.Type); err != nil {
 			return nil, err
 		}
 	}
@@ -387,31 +409,34 @@ func unmarshalStruct(data []byte, rv reflect.Value) error {
 		return err
 	}
 	for _, f := range fields {
-		values := q[f.Name]
+		values := q[f.KeyName]
 		if len(values) <= 0 {
 			continue
 		}
-		fv := rv.Field(f.Index)
-		switch f.Type {
-		case stringSliceType, numberSliceType:
-			av := reflect.MakeSlice(reflect.SliceOf(f.ArrayElementType), len(values), len(values))
+		fv := rv.FieldByName(f.FieldName)
+		switch rk := f.Type.Kind(); rk {
+		case reflect.Slice, reflect.Array:
+			et := f.Type.Elem() // slice/array element type
+			ek := et.Kind()     // slice/array element kind
+			av := reflect.MakeSlice(reflect.SliceOf(et), len(values), len(values))
 			for i := 0; i < len(values); i++ {
 				ev := av.Index(i)
-				cv, err := convertFromString(f.ArrayElementKind, values[i])
+				cv, err := convertFromString(ek, values[i])
 				if err != nil {
 					return err
 				}
 				ev.Set(cv)
 			}
 			fv.Set(av)
-		case stringType, numberType:
-			cv, err := convertFromString(f.Kind, values[0])
+		default:
+			if !isStringOrNumeric(rk) {
+				return errors.New("urlenc.Unmarshal: unsupported type for field " + f.FieldName + " (Kind: " + rk.String() + ")")
+			}
+			cv, err := convertFromString(f.Type.Kind(), values[0])
 			if err != nil {
 				return err
 			}
 			fv.Set(cv)
-		default:
-			return errors.New("unknown type")
 		}
 	}
 	return nil

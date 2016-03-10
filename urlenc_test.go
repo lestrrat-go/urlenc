@@ -75,7 +75,7 @@ func TestMarshalZeroInt(t *testing.T) {
 		return
 	}
 
-	if !assert.Equal(t, string(buf), "", "zero values don't get marshaled") {
+	if !assert.Equal(t, "", string(buf), "zero values don't get marshaled") {
 		return
 	}
 }
