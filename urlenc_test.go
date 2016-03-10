@@ -78,3 +78,29 @@ func TestMarshalZeroInt(t *testing.T) {
 		return
 	}
 }
+
+func TestMarshalMap(t *testing.T) {
+	m := make(map[string]interface{})
+	m["bar"] = "one"
+	m["baz"] = 2
+	m["qux"] = []string{"three", "4"}
+	m["corge"] = []float64{1.41421356237, 2.2360679775}
+
+	buf, err := urlenc.Marshal(m)
+	if !assert.NoError(t, err, "Marshal should succeed") {
+		return
+	}
+
+	produced, err := url.ParseQuery(string(buf))
+	if !assert.NoError(t, err, "ParseQuery should succeed") {
+		return
+	}
+	const src = `bar=one&baz=2&qux=three&qux=4&corge=1.41421356237&corge=2.2360679775`
+	expected, err := url.ParseQuery(src)
+	if !assert.NoError(t, err, "ParseQuery should succeed") {
+		return
+	}
+	if !assert.Equal(t, produced, expected, "Marshal produces the same result") {
+		return
+	}
+}
