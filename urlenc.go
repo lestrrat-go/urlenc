@@ -87,15 +87,6 @@ func getValuerMethod(fv reflect.Value) reflect.Value {
 }
 
 func convertToString(rv reflect.Value) (string, error) {
-	if mv := getValuerMethod(rv); mv != zeroval {
-		out := mv.Call(nil)
-		rv = out[0]
-		switch rv.Kind() {
-		case reflect.Ptr, reflect.Interface:
-			rv = rv.Elem()
-		}
-	}
-
 	switch rv.Kind() {
 	case reflect.String:
 		return rv.String(), nil
@@ -336,6 +327,15 @@ func Marshal(v interface{}) ([]byte, error) {
 }
 
 func addValue(uv *url.Values, name string, fv reflect.Value, ft reflect.Type) error {
+	if mv := getValuerMethod(fv); mv != zeroval {
+		out := mv.Call(nil)
+		fv = out[0]
+		switch fv.Kind() {
+		case reflect.Ptr, reflect.Interface:
+			fv = fv.Elem()
+		}
+	}
+
 	if isStringOrNumeric(ft.Kind()) {
 		s, err := convertToString(fv)
 		if err != nil {
@@ -401,7 +401,12 @@ func marshalStruct(rv reflect.Value) ([]byte, error) {
 					continue
 				}
 			case reflect.Struct:
-				if fv.Interface() == reflect.Zero(ft).Interface() {
+				if fv.Type().Comparable() {
+					if fv.Interface() == reflect.Zero(ft).Interface() {
+						continue
+					}
+				}
+				if reflect.DeepEqual(fv.Interface(), reflect.Zero(ft).Interface()) {
 					continue
 				}
 			default:
@@ -511,20 +516,21 @@ func unmarshalStruct(data []byte, rv reflect.Value) error {
 			fv = fv.Elem()
 		}
 
+		var err error
+		var sv reflect.Value // value to be set
 		switch rk := f.Type.Kind(); rk {
 		case reflect.Slice, reflect.Array:
 			et := f.Type.Elem() // slice/array element type
 			ek := et.Kind()     // slice/array element kind
-			av := reflect.MakeSlice(reflect.SliceOf(et), len(values), len(values))
+			sv = reflect.MakeSlice(reflect.SliceOf(et), len(values), len(values))
 			for i := 0; i < len(values); i++ {
-				ev := av.Index(i)
+				ev := sv.Index(i)
 				cv, err := convertFromString(ek, values[i])
 				if err != nil {
 					return err
 				}
 				ev.Set(cv)
 			}
-			fv.Set(av)
 		default:
 			// This is checking for the REGISTERED type, not the actual type of the field
 			if !isStringOrNumeric(rk) {
@@ -532,24 +538,22 @@ func unmarshalStruct(data []byte, rv reflect.Value) error {
 			}
 
 			// Now convert the value
-			cv, err := convertFromString(f.Type.Kind(), values[0])
+			sv, err = convertFromString(f.Type.Kind(), values[0])
 			if err != nil {
 				return err
 			}
+		}
 
-			// See if our value can Set()
-			mv := getSetterMethod(fv)
-			if mv == zeroval {
-				// No set. Try doing it the orthodox way
-				fv.Set(cv)
-			} else {
-				out := mv.Call([]reflect.Value{cv})
-				if !out[0].IsNil() {
-					return out[0].Interface().(error)
-				}
-				continue
+		// See if our value can Set()
+		mv := getSetterMethod(fv)
+		if mv == zeroval {
+			// No set. Try doing it the orthodox way
+			fv.Set(sv)
+		} else {
+			out := mv.Call([]reflect.Value{sv})
+			if !out[0].IsNil() {
+				return out[0].Interface().(error)
 			}
-
 		}
 	}
 	return nil

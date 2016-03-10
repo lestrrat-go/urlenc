@@ -15,6 +15,11 @@ type MaybeString struct {
 	String string
 }
 
+type MaybeStringSlice struct {
+	Valid bool
+	Slice []string
+}
+
 func (m MaybeString) Value() interface{} {
 	return m.String
 }
@@ -22,6 +27,7 @@ func (m MaybeString) Value() interface{} {
 func (m *MaybeString) Set(v interface{}) error {
 	switch v.(type) {
 	case string:
+		m.Valid = true
 		m.String = v.(string)
 	default:
 		return errors.New("expected string (got: " + reflect.TypeOf(v).String() + ")")
@@ -29,16 +35,32 @@ func (m *MaybeString) Set(v interface{}) error {
 	return nil
 }
 
+func (m MaybeStringSlice) Value() interface{} {
+	return m.Slice
+}
+
+func (m *MaybeStringSlice) Set(v interface{}) error {
+	switch v.(type) {
+	case []string:
+		m.Valid = true
+		m.Slice = v.([]string)
+	default:
+		return errors.New("expected string slice (got: " + reflect.TypeOf(v).String() + ")")
+	}
+	return nil
+}
+
 type Foo struct {
-	Bar     string      `urlenc:"bar"`
-	Baz     int         `urlenc:"baz"`
-	Qux     []string    `urlenc:"qux"`
-	Corge   []float64   `urlenc:"corge"`
-	Special MaybeString `urlenc:"special,omitempty,string"`
+	Bar          string           `urlenc:"bar"`
+	Baz          int              `urlenc:"baz"`
+	Qux          []string         `urlenc:"qux"`
+	Corge        []float64        `urlenc:"corge"`
+	Special      MaybeString      `urlenc:"special,omitempty,string"`
+	SpecialSlice MaybeStringSlice `urlenc:"sslice,omitempty,[]string"`
 }
 
 func TestUnmarshal(t *testing.T) {
-	const src = `bar=one&baz=2&qux=three&qux=4&corge=1.41421356237&corge=2.2360679775&special=special`
+	const src = `bar=one&baz=2&qux=three&qux=4&corge=1.41421356237&corge=2.2360679775&special=special&sslice=five&sslice=6`
 
 	var foo Foo
 	if !assert.NoError(t, urlenc.Unmarshal([]byte(src), &foo), "Unmarshal should succeed") {
@@ -60,16 +82,21 @@ func TestUnmarshal(t *testing.T) {
 	if !assert.Equal(t, foo.Special.String, "special", "Spcial is 'special'") {
 		return
 	}
+	if !assert.Equal(t, foo.SpecialSlice.Slice, []string{"five", "6"}, `SpcialSlice is '"five", "6"'`) {
+		return
+	}
 }
 
 func TestMarshal(t *testing.T) {
-	const src = `bar=one&baz=2&qux=three&qux=4&corge=1.41421356237&corge=2.2360679775`
+	const src = `bar=one&baz=2&qux=three&qux=4&corge=1.41421356237&corge=2.2360679775&special=special&sslice=five&sslice=6`
 
 	foo := Foo{
 		Bar:   "one",
 		Baz:   2,
 		Qux:   []string{"three", "4"},
 		Corge: []float64{1.41421356237, 2.2360679775},
+		Special: MaybeString{Valid: true, String: "special"},
+		SpecialSlice: MaybeStringSlice{Valid: true, Slice: []string{"five", "6"}},
 	}
 	buf, err := urlenc.Marshal(foo)
 	if !assert.NoError(t, err, "Marshal should succeed") {
