@@ -322,7 +322,7 @@ func Marshal(v interface{}) ([]byte, error) {
 	case reflect.Struct:
 		return marshalStruct(rv)
 	default:
-		return nil, errors.New("urlenc.Marshal: unsupported type (Kind: " + rv.Kind().String() + ")")
+		return nil, errors.New("urlenc.Marshal: unsupported type (" + rv.Type().String() + ")")
 	}
 }
 
@@ -369,7 +369,7 @@ func marshalMap(rv reflect.Value) ([]byte, error) {
 		}
 
 		if ok := isSupportedType(fv.Type(), true); !ok {
-			return nil, errors.New("urlenc: unsupported type on map element " + key.String())
+			return nil, errors.New("urlenc: unsupported type on map element " + key.String() + " (" + fv.Type().String() + ")")
 		}
 
 		if err := addValue(&uv, key.String(), fv, fv.Type()); err != nil {
