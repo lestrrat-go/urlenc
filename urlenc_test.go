@@ -68,6 +68,7 @@ func TestMarshal(t *testing.T) {
 type ZeroInt struct {
 	Limit int `urlenc:"limit,omitempty"`
 }
+
 func TestMarshalZeroInt(t *testing.T) {
 	buf, err := urlenc.Marshal(ZeroInt{})
 	if !assert.NoError(t, err, "Marshal should succeed") {
@@ -101,6 +102,25 @@ func TestMarshalMap(t *testing.T) {
 		return
 	}
 	if !assert.Equal(t, produced, expected, "Marshal produces the same result") {
+		return
+	}
+}
+
+func TestUnmarshalMap(t *testing.T) {
+	const src = `bar=one&baz=2&qux=three&qux=4&corge=1.41421356237&corge=2.2360679775`
+
+	m := make(map[string]interface{})
+	if !assert.NoError(t, urlenc.Unmarshal([]byte(src), &m), "Unmarshal succeeds") {
+		return
+	}
+
+	expected := make(map[string]interface{})
+	expected["bar"] = "one"
+	expected["baz"] = "2" // Note, not integer 2, but string "2", because we can't tell them apart
+	expected["qux"] = []string{"three", "4"}
+	expected["corge"] = []string{"1.41421356237", "2.2360679775"} // Same as "baz"
+
+	if !assert.Equal(t, m, expected, "Unmarshal produces the expected result") {
 		return
 	}
 }

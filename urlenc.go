@@ -339,12 +339,43 @@ func Unmarshal(data []byte, v interface{}) error {
 
 	// This better be a pointer
 	if rv.Kind() != reflect.Ptr {
-		return errors.New("pointer to a struct required")
+		return errors.New("pointer value required")
 	}
 
 	// Get the value beyond the pointer
 	rv = rv.Elem()
 
+	switch rv.Kind() {
+	case reflect.Map:
+		if kk := rv.Type().Key().Kind(); kk != reflect.String {
+			return errors.New("urlenc.Unmarshal: map key must be string type (Kind: " + kk.String() + ")")
+		}
+		return unmarshalMap(data, rv)
+	case reflect.Struct:
+		return unmarshalStruct(data, rv)
+	default:
+		return errors.New("urlenc.Unmarshal: unsupported type (Kind: " + rv.Kind().String() + ")")
+	}
+}
+
+func unmarshalMap(data []byte, rv reflect.Value) error {
+	q, err := url.ParseQuery(string(data))
+	if err != nil {
+		return err
+	}
+
+	for k, v := range q {
+		if len(v) == 1 {
+			rv.SetMapIndex(reflect.ValueOf(k), reflect.ValueOf(v[0]))
+		} else {
+			rv.SetMapIndex(reflect.ValueOf(k), reflect.ValueOf(v))
+		}
+	}
+
+	return nil
+}
+
+func unmarshalStruct(data []byte, rv reflect.Value) error {
 	// Grab the mapping from struct tags
 	fields, err := t2f.getStructFields(rv.Type())
 	if err != nil {
