@@ -231,6 +231,10 @@ func (tkm type2fields) getStructFields(t reflect.Type) ([]structfield, error) {
 	km = make([]structfield, 0, t.NumField())
 	for i := 0; i < t.NumField(); i++ {
 		f := t.Field(i)
+		if f.PkgPath != "" {
+			// If PkgPath is non empty, then it's an unexported field
+			continue
+		}
 
 		var keyname string
 		var omitempty bool
