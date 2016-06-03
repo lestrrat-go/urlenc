@@ -75,6 +75,14 @@ this value as an integer
 Incidentally, if you use this option you almost always want to use the `Setter` and
 `Valuer` interfaces. See elsewhere in this document for details
 
+# Falling Back To `json` Struct Tag
+
+I have often found myself repeating pretty much the same struct tag definition for a struct field in both `json` and `urlenc` tags. They are pretty much the same except for the last argument...
+
+To avoid having to write it down twice for every struct field, `urlenc` can
+fallback to using `json` tags. Simply omit the `urlenc` tag, and it will
+use the contents of the `json` tag.
+
 # Setter/Valuer interfaces
 
 Sometimes you want to pretend as if a struct is actually a simple type that this

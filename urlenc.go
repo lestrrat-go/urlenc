@@ -7,6 +7,7 @@ import (
 	"errors"
 	"net/url"
 	"reflect"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -214,6 +215,8 @@ func nameToType(s string, recurse bool) reflect.Type {
 	return nil
 }
 
+var wssplitRx = regexp.MustCompile(`\s+`)
+
 func (tkm type2fields) getStructFields(t reflect.Type) ([]structfield, error) {
 	if t.Kind() != reflect.Struct {
 		return nil, errors.New("target is not a struct (Kind: " + t.Kind().String() + ")")
@@ -243,10 +246,39 @@ func (tkm type2fields) getStructFields(t reflect.Type) ([]structfield, error) {
 			// no tag at all. Use the name of the field as-is
 			keyname = f.Name
 		} else {
-			st := f.Tag.Get("urlenc")
+			// This is silly, but reflect.StructTag.Get cannot differentiate between
+			// an empty struct tag with a non-existent struct tag. This is what we
+			// like to do:
+			// 1) "urlenc" exists, and is non-empty: parse it, use it as planned
+			// 2) "urlenc" exists, and is empty: use field name as-is
+			// 3) "json" exists: do the same as 1+2 using its value
+			//
+			// We do a really half-assed parsing here. reading the reflect docs,
+			// the authors expect "name:" where name does not contain spaces...
+			// hmm, we could be really smart about it, or we could just handwave it.
+			// I handwaved it:
+
+			var tagname string
+			possibletags := wssplitRx.Split(string(f.Tag), -1)
+		OUTER:
+			for _, candidate := range []string{"urlenc", "json"} {
+				for _, target := range possibletags {
+					if strings.HasPrefix(target, candidate+":") {
+						tagname = candidate
+						break OUTER
+					}
+				}
+			}
+
+			st := f.Tag.Get(tagname)
 			if st == "" {
 				// tag exists, but is empty. Use the name of the field as-is
 				keyname = f.Name
+			}
+
+			if st == "-" {
+				// ignore this field
+				continue
 			}
 
 			// urlenc:"foo,omitempty,<type>"
