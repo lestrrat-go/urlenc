@@ -55,6 +55,8 @@ type Foo struct {
 	Baz          int              `urlenc:"baz"`
 	Qux          []string         `urlenc:"qux"`
 	Corge        []float64        `urlenc:"corge"`
+	Grault       bool             `urlenc:"grault"`
+	Garply       []bool           `urlenc:"garply"`
 	Special      MaybeString      `urlenc:"special,omitempty,string"`
 	SpecialSlice MaybeStringSlice `urlenc:"sslice,omitempty,[]string"`
 }
@@ -64,7 +66,7 @@ type FooJ struct {
 }
 
 func TestUnmarshal(t *testing.T) {
-	const src = `bar=one&baz=2&qux=three&qux=4&corge=1.41421356237&corge=2.2360679775&special=special&sslice=five&sslice=6`
+	const src = `bar=one&baz=2&qux=three&qux=4&corge=1.41421356237&corge=2.2360679775&garply=true&garply=false&grault=true&special=special&sslice=five&sslice=6`
 
 	var foo Foo
 	if !assert.NoError(t, urlenc.Unmarshal([]byte(src), &foo), "Unmarshal should succeed") {
@@ -89,10 +91,17 @@ func TestUnmarshal(t *testing.T) {
 	if !assert.Equal(t, foo.SpecialSlice.Slice, []string{"five", "6"}, `SpcialSlice is '"five", "6"'`) {
 		return
 	}
+
+	if !assert.Equal(t, foo.Grault, true, `Grault is true`) {
+		return
+	}
+	if !assert.Equal(t, foo.Garply, []bool{true,false}, `Garply is true, false`) {
+		return
+	}
 }
 
 func TestMarshal(t *testing.T) {
-	const src = `bar=one&baz=2&qux=three&qux=4&corge=1.41421356237&corge=2.2360679775&special=special&sslice=five&sslice=6`
+	const src = `bar=one&baz=2&qux=three&qux=4&corge=1.41421356237&corge=2.2360679775&grault=false&special=special&sslice=five&sslice=6`
 
 	foo := Foo{
 		Bar:          "one",

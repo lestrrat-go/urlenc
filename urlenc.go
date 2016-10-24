@@ -46,7 +46,7 @@ type type2fields struct {
 
 func isStringOrNumeric(rk reflect.Kind) bool {
 	switch rk {
-	case reflect.String:
+	case reflect.String, reflect.Bool:
 		return true
 	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64, reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Float32, reflect.Float64:
 		return true
@@ -89,6 +89,11 @@ func getValuerMethod(fv reflect.Value) reflect.Value {
 
 func convertToString(rv reflect.Value) (string, error) {
 	switch rv.Kind() {
+	case reflect.Bool:
+		if rv.Bool() {
+			return "true", nil
+		}
+		return "false", nil
 	case reflect.String:
 		return rv.String(), nil
 	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
@@ -104,6 +109,12 @@ func convertToString(rv reflect.Value) (string, error) {
 
 func convertFromString(k reflect.Kind, v string) (reflect.Value, error) {
 	switch k {
+	case reflect.Bool:
+		bv, err := strconv.ParseBool(v)
+		if err != nil {
+			return zeroval, err
+		}
+		return reflect.ValueOf(bv), nil
 	case reflect.String:
 		return reflect.ValueOf(v), nil
 	case reflect.Int:
