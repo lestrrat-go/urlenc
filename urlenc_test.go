@@ -95,7 +95,7 @@ func TestUnmarshal(t *testing.T) {
 	if !assert.Equal(t, foo.Grault, true, `Grault is true`) {
 		return
 	}
-	if !assert.Equal(t, foo.Garply, []bool{true,false}, `Garply is true, false`) {
+	if !assert.Equal(t, foo.Garply, []bool{true, false}, `Garply is true, false`) {
 		return
 	}
 }
@@ -227,5 +227,24 @@ func TestUnmarshalJSONFallback(t *testing.T) {
 	if !assert.Equal(t, s, expected, "Unmarshal produces the expected result") {
 		return
 	}
+}
 
+type RackStylePayload struct {
+	Foo   string   `urlenc:"foo"`
+	Names []string `urlenc:"names[]"`
+}
+
+func TestRackStyleQuery(t *testing.T) {
+	const src = `foo=bar&names[]=foo&names[]=bar`
+	var s RackStylePayload
+	if !assert.NoError(t, urlenc.Unmarshal([]byte(src), &s), "Unmarshal succeeds") {
+		return
+	}
+	expected := RackStylePayload{
+		Foo:   "bar",
+		Names: []string{"foo", "bar"},
+	}
+	if !assert.Equal(t, s, expected, "Unmarshal produces the expected result") {
+		return
+	}
 }
