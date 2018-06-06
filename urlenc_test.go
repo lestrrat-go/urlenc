@@ -6,7 +6,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/lestrrat/go-urlenc"
+	"github.com/lestrrat-go/urlenc"
 	"github.com/stretchr/testify/assert"
 )
 
